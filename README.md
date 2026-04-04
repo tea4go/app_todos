@@ -18,10 +18,14 @@
 
 ## 快速开始
 
+### 安装依赖
+
 ```bash
 cd app_todos
-npm ci
+npm install --legacy-peer-deps
 ```
+
+### 启动开发服务
 
 启动开发服务（推荐）：
 
@@ -36,6 +40,15 @@ npm run ios
 npm run android
 npm run web
 ```
+
+### Android 构建（推荐使用脚本）
+
+**快速构建 APK**：
+```bash
+./build-android.sh
+```
+
+详细说明请查看 [Android 构建指南](docs/android-build.md)。
 
 ## 常用脚本
 
