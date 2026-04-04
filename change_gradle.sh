@@ -12,6 +12,10 @@ DO_PATCH_WRAPPER=0
 WRITE_INIT_SET=0
 PATCH_WRAPPER_SET=0
 DO_SHOW_CONFIG=0
+DO_INSTALL_GRADLE=0
+DO_LIST_VERSIONS=0
+GRADLE_VERSION=""
+GRADLE_INSTALL_DIR="${HOME}/.local/gradle"
 
 print_help() {
   cat <<'USAGE'
@@ -21,6 +25,8 @@ print_help() {
 参数:
   --mirror <aliyun|off>      选择仓库镜像(默认 aliyun)
   --project-dir <dir>        工程目录(默认当前目录)
+  --install-gradle <version> 安装指定版本的 Gradle
+  --install-dir <dir>        Gradle 安装目录(默认 ~/.local/gradle)
 
 选项:
   --write-init               写入 ~/.gradle/init.gradle
@@ -30,12 +36,17 @@ print_help() {
   --speed                    测试 Gradle 相关地址访问速度
   --only-speed               仅测速(等价于 --no-write-init --no-patch-wrapper --speed)
   --show-config              显示当前 Gradle 配置(包括下载源)
+  --list-versions            查询可下载的 Gradle 版本列表
   -h, --help                 显示帮助
 
 示例:
   ./change_gradle.sh --mirror aliyun --project-dir ~/code/my-android-project --write-init --patch-wrapper
   ./change_gradle.sh --project-dir ~/code/my-android-project --speed
   ./change_gradle.sh --only-speed ~/code/my-android-project
+  ./change_gradle.sh --show-config
+  ./change_gradle.sh --list-versions
+  ./change_gradle.sh --install-gradle 8.14.3
+  ./change_gradle.sh --install-gradle 8.14.3 --mirror aliyun --install-dir /usr/local/gradle
 
 兼容模式(旧用法):
   ./change_gradle.sh [mirror] [project_dir]
@@ -102,6 +113,27 @@ while [[ "$#" -gt 0 ]]; do
       DO_SHOW_CONFIG=1
       shift
       ;;
+    --list-versions)
+      DO_LIST_VERSIONS=1
+      shift
+      ;;
+    --install-gradle)
+      if [[ "$#" -lt 2 ]]; then
+        echo "--install-gradle 需要一个版本号参数" >&2
+        exit 2
+      fi
+      DO_INSTALL_GRADLE=1
+      GRADLE_VERSION="${2}"
+      shift 2
+      ;;
+    --install-dir)
+      if [[ "$#" -lt 2 ]]; then
+        echo "--install-dir 需要一个目录参数" >&2
+        exit 2
+      fi
+      GRADLE_INSTALL_DIR="${2}"
+      shift 2
+      ;;
     --*)
       echo "未知参数: $1" >&2
       echo "使用 -h 或 --help 查看帮助" >&2
@@ -131,13 +163,13 @@ else
     PROJECT_DIR="${POSITIONAL[1]}"
   fi
 
-  if [[ "${#POSITIONAL[@]}" -gt 0 && "${WRITE_INIT_SET}" == "0" && "${PATCH_WRAPPER_SET}" == "0" && "${DO_SPEED_TEST}" == "0" && "${DO_SHOW_CONFIG}" == "0" ]]; then
+  if [[ "${#POSITIONAL[@]}" -gt 0 && "${WRITE_INIT_SET}" == "0" && "${PATCH_WRAPPER_SET}" == "0" && "${DO_SPEED_TEST}" == "0" && "${DO_SHOW_CONFIG}" == "0" && "${DO_INSTALL_GRADLE}" == "0" && "${DO_LIST_VERSIONS}" == "0" ]]; then
     DO_WRITE_INIT=1
     DO_PATCH_WRAPPER=1
   fi
 fi
 
-if [[ "${DO_WRITE_INIT}" == "0" && "${DO_PATCH_WRAPPER}" == "0" && "${DO_SPEED_TEST}" == "0" && "${DO_SHOW_CONFIG}" == "0" ]]; then
+if [[ "${DO_WRITE_INIT}" == "0" && "${DO_PATCH_WRAPPER}" == "0" && "${DO_SPEED_TEST}" == "0" && "${DO_SHOW_CONFIG}" == "0" && "${DO_INSTALL_GRADLE}" == "0" && "${DO_LIST_VERSIONS}" == "0" ]]; then
   print_help
   exit 0
 fi
@@ -377,6 +409,136 @@ show_config() {
   echo "=========================================="
 }
 
+list_gradle_versions() {
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "错误: 未找到 curl 命令" >&2
+    return 2
+  fi
+
+  echo "正在获取 Gradle 版本列表..."
+  echo ""
+
+  local api_url="https://services.gradle.org/versions/all"
+  local temp_file
+  temp_file="$(mktemp)"
+  trap 'rm -f "${temp_file}"' EXIT
+
+  if ! curl -s -o "${temp_file}" "${api_url}"; then
+    echo "错误: 获取版本列表失败" >&2
+    return 2
+  fi
+
+  echo "=========================================="
+  echo "Gradle 可用版本列表"
+  echo "=========================================="
+  echo ""
+  echo "最新版本 (前 20 个):"
+  echo ""
+
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.[:20] | .[] | "\(.version)  \(.rcFor // .milestoneFor // "稳定版")  发布日期: \(.buildTime[:10])"' "${temp_file}" 2>/dev/null || {
+      echo "警告: 使用 jq 解析失败，使用备选方案" >&2
+      grep -oE '"version":"[^"]*"' "${temp_file}" | head -20 | cut -d'"' -f4
+    }
+  else
+    echo "提示: 安装 jq 命令可获得更详细的版本信息"
+    echo ""
+    grep -oE '"version":"[^"]*"' "${temp_file}" | head -20 | cut -d'"' -f4
+  fi
+
+  echo ""
+  echo "=========================================="
+  echo "获取所有版本:"
+  echo "  curl -s ${api_url} | jq -r '.[].version'"
+  echo ""
+  echo "查找特定版本:"
+  echo "  curl -s ${api_url} | jq -r '.[] | select(.version | startswith(\"8.1\")) | .version'"
+  echo ""
+  echo "安装指定版本:"
+  echo "  $0 --install-gradle <version>"
+  echo "=========================================="
+}
+
+install_gradle() {
+  if [[ -z "${GRADLE_VERSION}" ]]; then
+    echo "错误: 未指定 Gradle 版本" >&2
+    return 2
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "错误: 未找到 curl 命令" >&2
+    return 2
+  fi
+
+  if ! command -v unzip >/dev/null 2>&1; then
+    echo "错误: 未找到 unzip 命令" >&2
+    return 2
+  fi
+
+  local download_url
+  if [[ "${MIRROR}" == "aliyun" ]]; then
+    download_url="https://mirrors.cloud.tencent.com/gradle/gradle-${GRADLE_VERSION}-bin.zip"
+    echo "使用腾讯云镜像下载 Gradle ${GRADLE_VERSION}"
+  else
+    download_url="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+    echo "使用官方源下载 Gradle ${GRADLE_VERSION}"
+  fi
+
+  local temp_dir
+  temp_dir="$(mktemp -d)"
+  trap 'rm -rf "${temp_dir}"' EXIT
+
+  local zip_file="${temp_dir}/gradle-${GRADLE_VERSION}-bin.zip"
+
+  echo "下载地址: ${download_url}"
+  echo "临时目录: ${temp_dir}"
+  echo "安装目录: ${GRADLE_INSTALL_DIR}"
+  echo ""
+  echo "开始下载..."
+
+  if ! curl -L --progress-bar -o "${zip_file}" "${download_url}"; then
+    echo "错误: 下载失败" >&2
+    return 2
+  fi
+
+  echo "下载完成，开始解压..."
+
+  mkdir -p "${GRADLE_INSTALL_DIR}"
+
+  if ! unzip -q "${zip_file}" -d "${temp_dir}"; then
+    echo "错误: 解压失败" >&2
+    return 2
+  fi
+
+  local gradle_dir="${GRADLE_INSTALL_DIR}/gradle-${GRADLE_VERSION}"
+
+  if [[ -d "${gradle_dir}" ]]; then
+    echo "警告: 目标目录已存在，将备份后覆盖"
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S)"
+    mv "${gradle_dir}" "${gradle_dir}.bak.${ts}"
+  fi
+
+  mv "${temp_dir}/gradle-${GRADLE_VERSION}" "${gradle_dir}"
+
+  echo ""
+  echo "=========================================="
+  echo "Gradle ${GRADLE_VERSION} 安装成功!"
+  echo "=========================================="
+  echo "安装位置: ${gradle_dir}"
+  echo ""
+  echo "设置环境变量 (添加到 ~/.bashrc 或 ~/.zshrc):"
+  echo "  export GRADLE_HOME=\"${gradle_dir}\""
+  echo "  export PATH=\"\${GRADLE_HOME}/bin:\${PATH}\""
+  echo ""
+  echo "或者创建符号链接:"
+  echo "  sudo ln -sf \"${gradle_dir}/bin/gradle\" /usr/local/bin/gradle"
+  echo ""
+  echo "验证安装:"
+  echo "  ${gradle_dir}/bin/gradle --version"
+  echo "=========================================="
+}
+
 if [[ "${DO_WRITE_INIT}" == "1" ]]; then
   write_init_gradle
   echo "已写入: ${INIT_FILE}"
@@ -392,4 +554,12 @@ fi
 
 if [[ "${DO_SHOW_CONFIG}" == "1" ]]; then
   show_config
+fi
+
+if [[ "${DO_LIST_VERSIONS}" == "1" ]]; then
+  list_gradle_versions
+fi
+
+if [[ "${DO_INSTALL_GRADLE}" == "1" ]]; then
+  install_gradle
 fi
