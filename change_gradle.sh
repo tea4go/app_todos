@@ -11,6 +11,7 @@ DO_WRITE_INIT=0
 DO_PATCH_WRAPPER=0
 WRITE_INIT_SET=0
 PATCH_WRAPPER_SET=0
+DO_SHOW_CONFIG=0
 
 print_help() {
   cat <<'USAGE'
@@ -28,6 +29,7 @@ print_help() {
   --no-patch-wrapper         不更新 gradle-wrapper.properties
   --speed                    测试 Gradle 相关地址访问速度
   --only-speed               仅测速(等价于 --no-write-init --no-patch-wrapper --speed)
+  --show-config              显示当前 Gradle 配置(包括下载源)
   -h, --help                 显示帮助
 
 示例:
@@ -96,6 +98,10 @@ while [[ "$#" -gt 0 ]]; do
       PATCH_WRAPPER_SET=1
       shift
       ;;
+    --show-config)
+      DO_SHOW_CONFIG=1
+      shift
+      ;;
     --*)
       echo "未知参数: $1" >&2
       echo "使用 -h 或 --help 查看帮助" >&2
@@ -125,13 +131,13 @@ else
     PROJECT_DIR="${POSITIONAL[1]}"
   fi
 
-  if [[ "${#POSITIONAL[@]}" -gt 0 && "${WRITE_INIT_SET}" == "0" && "${PATCH_WRAPPER_SET}" == "0" && "${DO_SPEED_TEST}" == "0" ]]; then
+  if [[ "${#POSITIONAL[@]}" -gt 0 && "${WRITE_INIT_SET}" == "0" && "${PATCH_WRAPPER_SET}" == "0" && "${DO_SPEED_TEST}" == "0" && "${DO_SHOW_CONFIG}" == "0" ]]; then
     DO_WRITE_INIT=1
     DO_PATCH_WRAPPER=1
   fi
 fi
 
-if [[ "${DO_WRITE_INIT}" == "0" && "${DO_PATCH_WRAPPER}" == "0" && "${DO_SPEED_TEST}" == "0" ]]; then
+if [[ "${DO_WRITE_INIT}" == "0" && "${DO_PATCH_WRAPPER}" == "0" && "${DO_SPEED_TEST}" == "0" && "${DO_SHOW_CONFIG}" == "0" ]]; then
   print_help
   exit 0
 fi
@@ -323,6 +329,54 @@ speed_test() {
   done
 }
 
+show_config() {
+  echo "=========================================="
+  echo "当前 Gradle 配置"
+  echo "=========================================="
+  echo ""
+
+  echo "1. 全局配置文件: ${INIT_FILE}"
+  if [[ -f "${INIT_FILE}" ]]; then
+    echo "   状态: 存在"
+    echo ""
+    echo "   内容:"
+    echo "   ----------------------------------------"
+    cat "${INIT_FILE}" | sed 's/^/   /'
+    echo "   ----------------------------------------"
+  else
+    echo "   状态: 不存在"
+  fi
+  echo ""
+
+  echo "2. 项目配置: ${PROJECT_DIR}"
+  local wrapper_props="${PROJECT_DIR}/gradle/wrapper/gradle-wrapper.properties"
+  if [[ -f "${wrapper_props}" ]]; then
+    echo "   gradle-wrapper.properties: 存在"
+    echo ""
+    local dist_url
+    dist_url="$(grep '^distributionUrl=' "${wrapper_props}" | cut -d= -f2- || echo "未找到")"
+    echo "   distributionUrl: ${dist_url}"
+  else
+    echo "   gradle-wrapper.properties: 不存在"
+  fi
+  echo ""
+
+  echo "3. 当前镜像设置: ${MIRROR}"
+  echo ""
+
+  if [[ "${MIRROR}" == "aliyun" ]]; then
+    echo "4. 阿里云镜像地址:"
+    echo "   Maven: https://maven.aliyun.com/repository/public"
+    echo "   Google: https://maven.aliyun.com/repository/google"
+    echo "   Gradle Plugin: https://maven.aliyun.com/repository/gradle-plugin"
+    echo "   Gradle 发行版: https://mirrors.aliyun.com/macports/distfiles/gradle/"
+  else
+    echo "4. 使用官方源 (无镜像)"
+  fi
+  echo ""
+  echo "=========================================="
+}
+
 if [[ "${DO_WRITE_INIT}" == "1" ]]; then
   write_init_gradle
   echo "已写入: ${INIT_FILE}"
@@ -334,4 +388,8 @@ fi
 
 if [[ "${DO_SPEED_TEST}" == "1" ]]; then
   speed_test
+fi
+
+if [[ "${DO_SHOW_CONFIG}" == "1" ]]; then
+  show_config
 fi
