@@ -35,6 +35,62 @@ if ! command -v npm &> /dev/null; then
 fi
 echo -e "${GREEN}✓ npm 版本: $(npm --version)${NC}"
 
+# 检查 Gradle / Gradle Wrapper
+GRADLE_TOOL=""
+if [ -f "android/gradlew" ]; then
+    GRADLE_TOOL="$SCRIPT_DIR/android/gradlew"
+elif command -v gradle &> /dev/null; then
+    GRADLE_TOOL="$(command -v gradle)"
+fi
+
+if [ -n "$GRADLE_TOOL" ]; then
+    GRADLE_VERSION="$("$GRADLE_TOOL" --version 2>/dev/null | awk '/^Gradle[[:space:]]+[0-9]/{print $2; exit}' || true)"
+    if [ -n "$GRADLE_VERSION" ]; then
+        echo -e "${GREEN}✓ Gradle 版本: ${GRADLE_VERSION}${NC}"
+    else
+        echo -e "${YELLOW}! 已检测到 Gradle，但无法获取版本（可能缺少 JDK 或权限问题）: $GRADLE_TOOL${NC}"
+    fi
+else
+    echo -e "${YELLOW}! 未检测到全局 Gradle（后续将使用 android/gradlew）${NC}"
+fi
+
+# 检查 Gradle 软件源（Wrapper 分发地址 / 仓库配置 / 本机 Gradle init 配置）
+if [ -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
+    DIST_URL="$(grep -E '^[[:space:]]*distributionUrl=' android/gradle/wrapper/gradle-wrapper.properties | head -n 1 | cut -d= -f2- || true)"
+    if [ -n "$DIST_URL" ]; then
+        echo -e "${GREEN}✓ Gradle Wrapper 分发地址: ${DIST_URL}${NC}"
+    fi
+else
+    echo -e "${YELLOW}! 未找到 gradle-wrapper.properties（android 目录可能尚未生成）${NC}"
+fi
+
+if [ -d "android" ]; then
+    REPO_LINES="$(grep -RIn --include='*.gradle' --include='*.gradle.kts' -E 'mavenCentral\(|google\(|jcenter\(|mavenLocal\(|maven[[:space:]]*\{[[:space:]]*url|maven\([[:space:]]*url|aliyun|maven\.aliyun' android 2>/dev/null | head -n 30 || true)"
+    if [ -n "$REPO_LINES" ]; then
+        echo -e "${GREEN}✓ Android Gradle 仓库配置(节选):${NC}"
+        echo "$REPO_LINES" | sed 's/^/  - /'
+    else
+        echo -e "${YELLOW}! 未在 android 下发现显式仓库配置（可能由插件默认提供）${NC}"
+    fi
+fi
+
+GRADLE_INIT_FILE=""
+if [ -f "$HOME/.gradle/init.gradle" ]; then
+    GRADLE_INIT_FILE="$HOME/.gradle/init.gradle"
+elif [ -f "$HOME/.gradle/init.gradle.kts" ]; then
+    GRADLE_INIT_FILE="$HOME/.gradle/init.gradle.kts"
+fi
+
+if [ -n "$GRADLE_INIT_FILE" ]; then
+    INIT_URL_LINES="$(grep -nE 'maven[[:space:]]*\{[[:space:]]*url|maven\([[:space:]]*url|aliyun|maven\.aliyun' "$GRADLE_INIT_FILE" 2>/dev/null | head -n 30 || true)"
+    if [ -n "$INIT_URL_LINES" ]; then
+        echo -e "${GREEN}✓ 本机 Gradle init 仓库配置(节选): ${GRADLE_INIT_FILE}${NC}"
+        echo "$INIT_URL_LINES" | sed 's/^/  - /'
+    else
+        echo -e "${GREEN}✓ 检测到本机 Gradle init 文件: ${GRADLE_INIT_FILE}${NC}"
+    fi
+fi
+
 # 检查 Android SDK
 if [ -z "$ANDROID_HOME" ] && [ -z "$ANDROID_SDK_ROOT" ]; then
     # 尝试查找常见的 Android SDK 位置
